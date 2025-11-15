@@ -1,64 +1,100 @@
+"""
+Main application entry point for Mortgage Calculator.
+
+This module serves as the entry point for the Streamlit application,
+orchestrating the UI components and business logic.
+"""
+
 import streamlit as st
-import pandas as pd
-import matplotlib.pyplot as plt
-import math
+import logging
+from typing import Optional
 
-st.title("Mortgage Repayments Calculator")
+from mortgage_calculator.calculations import MortgageCalculator
+from mortgage_calculator.models import MortgageInputs
+from mortgage_calculator.ui_components import MortgageUI
+from mortgage_calculator.utils import validate_inputs
 
-st.write("### Input Data")
-col1, col2 = st.columns(2)
-home_value = col1.number_input("Home Value", min_value=0, value=500000)
-deposit = col1.number_input("Deposit", min_value=0, value=100000)
-interest_rate = col2.number_input("Interest Rate (in %)", min_value=0.0, value=5.5)
-loan_term = col2.number_input("Loan Term (in years)", min_value=1, value=30)
-
-# Calculate the repayments.
-loan_amount = home_value - deposit
-monthly_interest_rate = (interest_rate / 100) / 12
-number_of_payments = loan_term * 12
-monthly_payment = (
-    loan_amount
-    * (monthly_interest_rate * (1 + monthly_interest_rate) ** number_of_payments)
-    / ((1 + monthly_interest_rate) ** number_of_payments - 1)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-
-# Display the repayments.
-total_payments = monthly_payment * number_of_payments
-total_interest = total_payments - loan_amount
-
-st.write("### Repayments")
-col1, col2, col3 = st.columns(3)
-col1.metric(label="Monthly Repayments", value=f"${monthly_payment:,.2f}")
-col2.metric(label="Total Repayments", value=f"${total_payments:,.0f}")
-col3.metric(label="Total Interest", value=f"${total_interest:,.0f}")
+logger = logging.getLogger(__name__)
 
 
-# Create a data-frame with the payment schedule.
-schedule = []
-remaining_balance = loan_amount
-
-for i in range(1, number_of_payments + 1):
-    interest_payment = remaining_balance * monthly_interest_rate
-    principal_payment = monthly_payment - interest_payment
-    remaining_balance -= principal_payment
-    year = math.ceil(i / 12)  # Calculate the year into the loan
-    schedule.append(
-        [
-            i,
-            monthly_payment,
-            principal_payment,
-            interest_payment,
-            remaining_balance,
-            year,
-        ]
+def main() -> None:
+    """
+    Main application function.
+    
+    This function orchestrates the entire application flow:
+    1. Renders the UI
+    2. Collects user inputs
+    3. Validates inputs
+    4. Performs calculations
+    5. Displays results
+    """
+    # Set page configuration
+    st.set_page_config(
+        page_title="Mortgage Calculator",
+        page_icon="🏠",
+        layout="centered",
+        initial_sidebar_state="collapsed",
     )
+    
+    # Initialize UI
+    ui = MortgageUI()
+    
+    # Render title
+    ui.render_title()
+    
+    try:
+        # Collect user inputs
+        inputs = ui.render_input_section()
+        
+        # Validate inputs
+        validation_error = validate_inputs(
+            inputs.home_value,
+            inputs.deposit,
+            inputs.interest_rate,
+            inputs.loan_term_years,
+        )
+        
+        if validation_error:
+            ui.show_error(validation_error)
+            logger.warning(f"Validation error: {validation_error}")
+            return
+        
+        # Perform calculations
+        logger.info(f"Calculating mortgage for inputs: {inputs}")
+        calculator = MortgageCalculator()
+        results, schedule = calculator.calculate_all(inputs)
+        
+        # Display results
+        ui.render_summary_metrics(results)
+        ui.render_additional_info(inputs, results)
+        ui.render_payment_schedule(schedule)
+        
+        logger.info("Calculations completed successfully")
+        
+    except ValueError as e:
+        error_message = f"Invalid input: {str(e)}"
+        ui.show_error(error_message)
+        logger.error(error_message, exc_info=True)
+        
+    except ZeroDivisionError as e:
+        error_message = "Calculation error: Division by zero occurred"
+        ui.show_error(error_message)
+        logger.error(error_message, exc_info=True)
+        
+    except Exception as e:
+        error_message = f"An unexpected error occurred: {str(e)}"
+        ui.show_error(error_message)
+        logger.error(error_message, exc_info=True)
+        
+        # In production, you might want to send this to a monitoring service
+        if st.checkbox("Show detailed error information (debug mode)"):
+            st.exception(e)
 
-df = pd.DataFrame(
-    schedule,
-    columns=["Month", "Payment", "Principal", "Interest", "Remaining Balance", "Year"],
-)
 
-# Display the data-frame as a chart.
-st.write("### Payment Schedule")
-payments_df = df[["Year", "Remaining Balance"]].groupby("Year").min()
-st.line_chart(payments_df)
+if __name__ == "__main__":
+    main()
